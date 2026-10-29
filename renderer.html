@@ -188,6 +188,9 @@
       <button class="platform-btn" data-platform="instagram" title="Instagram">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.5" cy="6.5" r="0.9" fill="currentColor"/></svg>
       </button>
+      <button class="platform-btn" data-platform="facebook" title="Facebook">
+        <svg width="14" height="14" viewBox="0 0 24 24"><text x="12" y="20" text-anchor="middle" font-size="22" font-weight="800" fill="currentColor" font-family="-apple-system, sans-serif">f</text></svg>
+      </button>
     </div>
     <div id="trial-badge"></div>
   </div>
@@ -259,8 +262,8 @@
   let state = { status: 'trial' }
   let showingSuccess = false
 
-  // --- Instagram styling (transparent body; overlays get solid backgrounds) ---
-  const IG_CSS = `
+  // --- Instagram / Facebook styling (transparent body; overlays get solid backgrounds) ---
+  const SIMPLE_PAGE_CSS = `
     html, body, div, span, section, main, article { background-color: transparent !important; }
     header, nav, footer { background-color: rgba(0, 0, 0, 0.22) !important; }
     ::-webkit-scrollbar { display: none !important; }
@@ -292,6 +295,7 @@
   const PLATFORMS = {
     threads: 'https://www.threads.net',
     instagram: 'https://www.instagram.com/',
+    facebook: 'https://www.facebook.com/',
   }
   let lastPlatform = 'threads'
   try { lastPlatform = localStorage.getItem('lucid-platform') || 'threads' } catch (e) {}
@@ -320,8 +324,17 @@
 
   // --- Injected page styling ---
   wv.addEventListener('dom-ready', () => {
-    if (wv.getURL().includes('instagram.com')) {
-      wv.insertCSS(IG_CSS)
+    if (/instagram\.com|facebook\.com/.test(wv.getURL())) {
+      // Login pages keep their own colors so the form stays readable.
+      // Check for a password field after a short wait, since login forms render late.
+      wv.executeJavaScript(`
+        (async () => {
+          await new Promise(r => setTimeout(r, 1500))
+          return !!document.querySelector('input[type="password"]')
+        })()
+      `).then(isLogin => {
+        if (!isLogin) wv.insertCSS(SIMPLE_PAGE_CSS)
+      }).catch(() => {})
       wv.executeJavaScript(OVERLAY_FIX_JS).catch(() => {})
       return
     }
