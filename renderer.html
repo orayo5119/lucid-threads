@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Lucid Threads</title>
+<style>
+  html, body {
+    margin: 0; padding: 0; width: 100%; height: 100%;
+    overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+  }
+
+  body {
+    background: rgba(0, 0, 0, 0.25);
+    -webkit-backdrop-filter: blur(18px);
+    backdrop-filter: blur(18px);
+    transition: background 0.3s ease;
+  }
+  body.cursor-inside { background: #222222; }
+
+  webview {
+    position: absolute;
+    top: 38px; left: 0;
+    width: 100%; height: calc(100% - 38px);
+    border: none; background: transparent;
+    /* Fade the whole feed in/out. Hidden = fully transparent (only frosted bg shows). */
+    opacity: 0.8;
+    transition: opacity 0.35s ease;
+  }
+  webview.feed-hidden { opacity: 0; }
+
+  #dragbar {
+    position: fixed; top: 0; left: 0; width: 100%; height: 38px;
+    z-index: 99991; -webkit-app-region: drag; background: transparent;
+  }
+
+  #loadbar { position: fixed; top: 38px; left: 0; height: 2px; width: 0%; background: #fff; z-index: 99992; transition: width 0.2s ease, opacity 0.3s ease; }
+
+  #snap-indicator { position: fixed; top: 0; left: 0; width: 3px; height: 100%; background: rgba(255,255,255,0.9); box-shadow: 0 0 12px rgba(255,255,255,0.8); opacity: 0; z-index: 99993; transition: opacity 0.15s ease; }
+  #snap-indicator.visible { opacity: 1; }
+
+  body::after {
+    content: ''; position: fixed; inset: 0; border-radius: 12px;
+    border: 1px solid rgba(255,255,255,0.18);
+    box-shadow: inset 0 0 0 0.5px rgba(255,255,255,0.25), 0 0 30px rgba(0,0,0,0.25);
+    pointer-events: none; z-index: 99997;
+  }
+
+  /* --- Status badge --- */
+  #trial-badge {
+    position: relative;
+    -webkit-app-region: no-drag;
+    padding: 4px 10px; border-radius: 999px;
+    background: rgba(0,0,0,0.55);
+    border: 0.5px solid rgba(255,255,255,0.25);
+    color: rgba(255,255,255,0.95);
+    font-size: 10.5px; font-weight: 500; letter-spacing: 0.2px;
+    white-space: nowrap; cursor: pointer;
+    opacity: 0; transition: opacity 0.3s ease;
+    pointer-events: none;
+  }
+  #trial-badge.visible:not(.hidden-by-blur) { opacity: 1; pointer-events: auto; }
+  #trial-badge.paid { color: #7ee2a8; border-color: rgba(126,226,168,0.4); }
+  #trial-badge.ending { color: #ffcf70; border-color: rgba(255,207,112,0.4); }
+
+  /* --- Top-right controls: platform switcher + badge --- */
+  #top-right {
+    position: fixed; top: 11px; right: 14px; z-index: 99994;
+    display: flex; align-items: center; gap: 8px;
+    -webkit-app-region: no-drag;
+  }
+  #platform-switch { display: flex; gap: 6px; transition: opacity 0.3s ease; }
+  #platform-switch.hidden-by-blur { opacity: 0; pointer-events: none; }
+  .platform-btn {
+    width: 26px; height: 26px; padding: 0; border-radius: 999px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(0,0,0,0.55); border: 0.5px solid rgba(255,255,255,0.25);
+    color: rgba(255,255,255,0.5);
+  }
+  .platform-btn.active { color: #fff; border-color: rgba(255,255,255,0.75); }
+
+  /* --- Account panel --- */
+  #account-panel {
+    display: none;
+    position: fixed; top: 38px; right: 14px; z-index: 99998;
+    -webkit-app-region: no-drag;
+    width: 224px; padding: 14px;
+    border-radius: 14px;
+    background: rgba(22,22,26,0.96);
+    border: 0.5px solid rgba(255,255,255,0.18);
+    box-shadow: 0 10px 34px rgba(0,0,0,0.5);
+    color: #fff;
+  }
+  #account-panel.visible { display: block; }
+  .ap-state { font-size: 11.5px; font-weight: 500; margin-bottom: 12px; }
+  .ap-btn {
+    width: 100%; padding: 7px 0; margin-bottom: 6px;
+    border-radius: 8px; border: 0.5px solid rgba(255,255,255,0.2);
+    background: rgba(255,255,255,0.08); color: #fff;
+    font-size: 11.5px; font-weight: 500; cursor: pointer;
+  }
+  .ap-btn:hover { background: rgba(255,255,255,0.16); }
+  .ap-btn.primary { background: rgba(255,255,255,0.92); color: #111; border: none; font-weight: 600; }
+  .ap-btn.primary:hover { background: #fff; }
+  .ap-input {
+    width: 100%; box-sizing: border-box; padding: 7px 9px; margin-bottom: 6px;
+    border-radius: 8px; border: 0.5px solid rgba(255,255,255,0.22);
+    background: rgba(255,255,255,0.06); color: #fff;
+    font-size: 11px; font-family: ui-monospace, Menlo, monospace;
+    outline: none;
+  }
+  .ap-input::placeholder { color: rgba(255,255,255,0.35); font-family: -apple-system, sans-serif; }
+  .ap-msg { font-size: 10px; min-height: 12px; margin-bottom: 4px; color: #ff8b8b; }
+  .ap-msg.ok { color: #7ee2a8; }
+  .ap-divider { height: 0.5px; background: rgba(255,255,255,0.15); margin: 10px 0; }
+  .ap-dev-label {
+    font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.6px;
+    color: #ffcf70; margin-bottom: 7px; font-weight: 600;
+  }
+  .ap-dev-row { display: flex; gap: 6px; }
+  .ap-dev-row .ap-btn { margin-bottom: 0; font-size: 10.5px; padding: 6px 0; }
+
+  /* --- Paywall overlay --- */
+  #paywall-overlay {
+    display: none; position: fixed; inset: 0; z-index: 999999;
+    background: rgba(10, 10, 14, 0.9);
+    align-items: center; justify-content: center; -webkit-app-region: drag;
+  }
+  #paywall-overlay.visible { display: flex; }
+  .paywall-card {
+    -webkit-app-region: no-drag; width: 272px; padding: 28px 22px; border-radius: 18px;
+    background: rgba(255,255,255,0.08); border: 0.5px solid rgba(255,255,255,0.18);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.12), 0 8px 30px rgba(0,0,0,0.35); text-align: center;
+  }
+  .paywall-title { color: #fff; font-size: 16px; font-weight: 600; margin-bottom: 6px; }
+  .paywall-sub { color: rgba(255,255,255,0.65); font-size: 12.5px; margin-bottom: 18px; line-height: 1.45; }
+  .pw-btn {
+    -webkit-app-region: no-drag; width: 100%; padding: 10px 0; margin-bottom: 10px;
+    border-radius: 999px; border: none;
+    background: rgba(255,255,255,0.92); color: #111;
+    font-size: 13px; font-weight: 600; cursor: pointer;
+  }
+  .pw-btn:hover { background: #fff; }
+  .pw-or { color: rgba(255,255,255,0.35); font-size: 10.5px; margin-bottom: 10px; }
+  .pw-input {
+    width: 100%; box-sizing: border-box; padding: 9px 11px; margin-bottom: 8px;
+    border-radius: 10px; border: 0.5px solid rgba(255,255,255,0.22);
+    background: rgba(255,255,255,0.06); color: #fff;
+    font-size: 12px; font-family: ui-monospace, Menlo, monospace;
+    text-align: center; outline: none;
+  }
+  .pw-input::placeholder { color: rgba(255,255,255,0.35); font-family: -apple-system, sans-serif; }
+  .pw-btn.secondary {
+    background: rgba(255,255,255,0.1); color: #fff;
+    border: 0.5px solid rgba(255,255,255,0.2); font-weight: 500;
+  }
+  .pw-btn.secondary:hover { background: rgba(255,255,255,0.18); }
+  .paywall-fineprint { margin-top: 4px; color: rgba(255,255,255,0.4); font-size: 10.5px; line-height: 1.4; }
+  .pw-error { margin-top: 8px; font-size: 10.5px; min-height: 13px; color: #ff8b8b; }
+  .pw-error.ok { color: #7ee2a8; }
+
+  .pw-success-check {
+    width: 46px; height: 46px; border-radius: 50%;
+    background: rgba(126,226,168,0.15); border: 1px solid rgba(126,226,168,0.5);
+    display: flex; align-items: center; justify-content: center;
+    margin: 0 auto 16px; color: #7ee2a8; font-size: 22px;
+  }
+  #update-banner { display: none; position: fixed; left: 12px; right: 12px; bottom: 12px; z-index: 99996;
+    background: #101014; color: #fff; border: 0.5px solid rgba(255,255,255,0.16); border-radius: 12px;
+    padding: 10px 12px; align-items: center; gap: 8px; font: 13px -apple-system, BlinkMacSystemFont, sans-serif; }
+  #update-banner.visible { display: flex; }
+  #update-banner span { flex: 1; }
+  #update-banner button { font: inherit; color: #fff; background: rgba(255,255,255,0.1); border: 0; border-radius: 8px; padding: 6px 10px; cursor: pointer; }
+  #update-banner #update-restart { background: #fff; color: #000; }
+</style>
+</head>
+<body>
+
+  <div id="dragbar"></div>
+  <div id="loadbar"></div>
+  <div id="snap-indicator"></div>
+  <div id="update-banner"><span id="update-text"></span><button id="update-later">Later</button><button id="update-restart">Restart</button></div>
+  <div id="top-right">
+    <div id="platform-switch">
+      <button class="platform-btn active" data-platform="threads" title="Threads">
+        <svg width="15" height="15" viewBox="0 0 24 24"><text x="12" y="19" text-anchor="middle" font-size="19" font-weight="700" fill="currentColor" font-family="-apple-system, sans-serif">@</text></svg>
+      </button>
+      <button class="platform-btn" data-platform="instagram" title="Instagram">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.5" cy="6.5" r="0.9" fill="currentColor"/></svg>
+      </button>
+    </div>
+    <div id="trial-badge"></div>
+  </div>
+
+  <!-- Account panel -->
+  <div id="account-panel">
+    <div class="ap-state" id="ap-state"></div>
+    <input class="ap-input" id="ap-key-input" placeholder="Enter license key" spellcheck="false">
+    <div class="ap-msg" id="ap-msg"></div>
+    <button class="ap-btn primary" id="ap-activate">Activate</button>
+    <button class="ap-btn" id="ap-subscribe">Subscribe — $0.99/mo</button>
+
+    <div class="ap-divider"></div>
+    <div class="ap-dev-label" style="color:rgba(255,255,255,0.5)">Feedback</div>
+    <textarea class="ap-input" id="ap-feedback-input" rows="3" placeholder="Ideas, bugs, anything…" spellcheck="true" style="resize:none; font-family:-apple-system, sans-serif;"></textarea>
+    <div class="ap-msg" id="ap-feedback-msg"></div>
+    <button class="ap-btn" id="ap-feedback-send">Send feedback</button>
+
+    <div id="ap-dev" style="display:none">
+      <div class="ap-divider"></div>
+      <div class="ap-dev-label">Dev mode</div>
+      <div class="ap-dev-row">
+        <button class="ap-btn" data-dev-status="active">Paid</button>
+        <button class="ap-btn" data-dev-status="trial">Trial</button>
+        <button class="ap-btn" data-dev-status="expired">Expired</button>
+      </div>
+    </div>
+  </div>
+
+  <webview id="wv"
+    src="https://www.threads.net"
+    useragent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+    partition="persist:threads"
+    preload="./preload.js"
+    allowpopups>
+  </webview>
+
+  <!-- Paywall -->
+  <div id="paywall-overlay">
+    <div class="paywall-card" id="pw-locked">
+      <div class="paywall-title">Your free month is up</div>
+      <div class="paywall-sub">Subscribe to keep using Lucid Threads — $0.99/month. Your license key appears right after checkout.</div>
+      <button class="pw-btn" id="pw-subscribe">Subscribe — $0.99/mo</button>
+      <div class="pw-or">already have a key?</div>
+      <input class="pw-input" id="pw-key-input" placeholder="LUCID-XXXXX-XXXXX-XXXXX" spellcheck="false">
+      <button class="pw-btn secondary" id="pw-activate">Activate key</button>
+      <div class="paywall-fineprint">Payment opens in your browser. Cancel anytime.<br>Keys work on up to 5 of your Macs.</div>
+      <div class="pw-error" id="pw-error"></div>
+    </div>
+
+    <div class="paywall-card" id="pw-success" style="display:none">
+      <div class="pw-success-check">✓</div>
+      <div class="paywall-title">Activated successfully</div>
+      <div class="paywall-sub">You're all set. Welcome to Lucid Threads.</div>
+      <button class="pw-btn" id="pw-close">Close</button>
+    </div>
+  </div>
+
+<script>
+  const { ipcRenderer } = require('electron')
+  const wv = document.getElementById('wv')
+  const loadbar = document.getElementById('loadbar')
+  const badge = document.getElementById('trial-badge')
+  const panel = document.getElementById('account-panel')
+  const overlay = document.getElementById('paywall-overlay')
+  const pwLocked = document.getElementById('pw-locked')
+  const pwSuccess = document.getElementById('pw-success')
+
+  let state = { status: 'trial' }
+  let showingSuccess = false
+
+  // --- Instagram styling (transparent body; overlays get solid backgrounds) ---
+  const IG_CSS = `
+    html, body, div, span, section, main, article { background-color: transparent !important; }
+    header, nav, footer { background-color: rgba(0, 0, 0, 0.22) !important; }
+    ::-webkit-scrollbar { display: none !important; }
+  `
+  // Gives visible overlays (menus, dialogs, hover cards) a solid background.
+  const OVERLAY_FIX_JS = `
+    (function() {
+      if (window.__lucidOverlayFix) return;
+      window.__lucidOverlayFix = true;
+      var SOLID = '#101014';
+      function fix() {
+        document.querySelectorAll('body *').forEach(function(el) {
+          if (el.offsetHeight === 0) return;
+          var cs = getComputedStyle(el);
+          var isOverlay = cs.position === 'fixed'
+            || el.getAttribute('role') === 'menu'
+            || el.getAttribute('role') === 'dialog'
+            || el.getAttribute('aria-modal') === 'true';
+          if (isOverlay && cs.backgroundColor === 'rgba(0, 0, 0, 0)') {
+            el.style.setProperty('background-color', SOLID, 'important');
+          }
+        });
+      }
+      fix();
+      new MutationObserver(fix).observe(document.body, { childList: true, subtree: true });
+    })();
+  `
+
+  const PLATFORMS = {
+    threads: 'https://www.threads.net',
+    instagram: 'https://www.instagram.com/',
+  }
+  let lastPlatform = 'threads'
+  try { lastPlatform = localStorage.getItem('lucid-platform') || 'threads' } catch (e) {}
+
+  function setPlatform(name, navigate) {
+    const platform = PLATFORMS[name] ? name : 'threads'
+    document.querySelectorAll('.platform-btn').forEach(b => b.classList.toggle('active', b.dataset.platform === platform))
+    try { localStorage.setItem('lucid-platform', platform) } catch (e) {}
+    if (navigate) wv.src = PLATFORMS[platform]
+  }
+  document.querySelectorAll('.platform-btn').forEach(b => {
+    b.addEventListener('click', () => setPlatform(b.dataset.platform, true))
+  })
+  setPlatform(lastPlatform, lastPlatform !== 'threads')
+
+  // --- Loading bar ---
+  wv.addEventListener('did-start-loading', () => {
+    loadbar.style.opacity = '1'
+    loadbar.style.width = '20%'
+    setTimeout(() => { loadbar.style.width = '65%' }, 150)
+  })
+  wv.addEventListener('did-stop-loading', () => {
+    loadbar.style.width = '100%'
+    setTimeout(() => { loadbar.style.opacity = '0'; loadbar.style.width = '0%' }, 250)
+  })
+
+  // --- Injected page styling ---
+  wv.addEventListener('dom-ready', () => {
+    if (wv.getURL().includes('instagram.com')) {
+      wv.insertCSS(IG_CSS)
+      wv.executeJavaScript(OVERLAY_FIX_JS).catch(() => {})
+      return
+    }
+    wv.insertCSS(`
+      html, body, div, span { background: transparent !important; }
+      button { background-color: transparent !important; }
+      ::-webkit-scrollbar { display: none !important; }
+      a[href="/search"] { display: none !important; }
+      [role="tablist"] { display: none !important; }
+      header, [role="banner"] {
+        background: rgba(255,255,255,0.06) !important;
+        position: sticky !important; top: 0; z-index: 500;
+      }
+      article, [role="article"] {
+        background: rgba(255,255,255,0.07) !important;
+        border-radius: 14px !important;
+        border: 0.5px solid rgba(255,255,255,0.16) !important;
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.08) !important;
+        overflow: visible !important;
+      }
+      nav[role="navigation"] { display: none !important; }
+      /* Compose / modal dialogs — force fully opaque so the feed can't bleed through */
+      [role="dialog"] { background: #101014 !important; border-radius: 20px !important; -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
+      [role="dialog"] div, [role="dialog"] span, [role="dialog"] section, [role="dialog"] label { background: #101014 !important; }
+      [role="dialog"] textarea, [role="dialog"] input, [role="dialog"] [contenteditable] { background: rgba(255,255,255,0.06) !important; }
+      [data-visualcompletion="overlay"], [role="dialog"] ~ div[style*="rgba(0, 0, 0"] { background: #000 !important; opacity: 1 !important; }
+    `)
+
+    wv.executeJavaScript(`
+      (function() {
+        function hideEmptyCards() {
+          document.querySelectorAll('article').forEach(el => {
+            if (!el.innerText || !el.innerText.trim()) el.style.display = 'none';
+          });
+        }
+        [300, 1000, 3000].forEach(t => setTimeout(hideEmptyCards, t));
+        new MutationObserver(hideEmptyCards).observe(document.documentElement, { childList: true, subtree: true });
+
+        // Expose pause/resume so the host can stop videos when the cursor leaves.
+        // We remember which videos WE paused, so returning only resumes those
+        // (not ones the user had already paused themselves).
+        window.__lucidPausedVideos = [];
+        window.__lucidPauseAll = function() {
+          window.__lucidPausedVideos = [];
+          document.querySelectorAll('video').forEach(function(v) {
+            if (!v.paused) { v.pause(); window.__lucidPausedVideos.push(v); }
+          });
+        };
+        window.__lucidResumeAll = function() {
+          (window.__lucidPausedVideos || []).forEach(function(v) {
+            var p = v.play(); if (p && p.catch) p.catch(function(){});
+          });
+          window.__lucidPausedVideos = [];
+        };
+      })();
+    `)
+
+    // Give any visible overlay (fixed-position, role=menu/dialog, aria-modal)
+    // a solid background, so the feed can't show through the hamburger menu,
+    // the post "..." sheet, author hover cards, or the account panel.
+    wv.executeJavaScript(`
+      (function() {
+        if (window.__lucidOverlayFix) return;
+        window.__lucidOverlayFix = true;
+        var SOLID = '#101014';
+        function fix() {
+          document.querySelectorAll('body *').forEach(function(el) {
+            if (el.offsetHeight === 0) return;
+            var cs = getComputedStyle(el);
+            var isOverlay = cs.position === 'fixed'
+              || el.getAttribute('role') === 'menu'
+              || el.getAttribute('role') === 'dialog'
+              || el.getAttribute('aria-modal') === 'true';
+            if (isOverlay && cs.backgroundColor === 'rgba(0, 0, 0, 0)') {
+              el.style.setProperty('background-color', SOLID, 'important');
+            }
+          });
+        }
+        fix();
+        new MutationObserver(fix).observe(document.body, { childList: true, subtree: true });
+      })();
+    `)
+  })
+
+  // --- Update banner ---
+  ipcRenderer.on('update-ready', (e, version) => {
+    document.getElementById('update-text').textContent = `Lucid Threads ${version} is ready. Restart to update.`
+    document.getElementById('update-banner').classList.add('visible')
+  })
+  document.getElementById('update-later').onclick = () => document.getElementById('update-banner').classList.remove('visible')
+  document.getElementById('update-restart').onclick = () => ipcRenderer.send('update:install')
+
+  // --- Snap indicator ---
+  ipcRenderer.on('snap-hint', (e, side) => {
+    document.getElementById('snap-indicator').classList.toggle('visible', side === 'left')
+  })
+
+  // --- Cursor enters/leaves the window ---
+  //   leave  -> feed fully hidden, videos paused, badge hidden, panel closed
+  //   enter  -> feed fades back, paused videos resume
+  ipcRenderer.on('cursor-in-window', (e, inside) => {
+    if (inside) {
+      wv.classList.remove('feed-hidden')
+      document.body.classList.add('cursor-inside')
+      badge.classList.remove('hidden-by-blur')
+      document.getElementById('platform-switch').classList.remove('hidden-by-blur')
+      wv.executeJavaScript('window.__lucidResumeAll && window.__lucidResumeAll()').catch(() => {})
+    } else {
+      wv.classList.add('feed-hidden')
+      document.body.classList.remove('cursor-inside')
+      badge.classList.add('hidden-by-blur')
+      document.getElementById('platform-switch').classList.add('hidden-by-blur')
+      panel.classList.remove('visible')
+      wv.executeJavaScript('window.__lucidPauseAll && window.__lucidPauseAll()').catch(() => {})
+    }
+  })
+
+  // --- Render licence state ---
+  ipcRenderer.on('license-status', (e, result) => {
+    state = result
+    renderBadgeAndPanel()
+    if (showingSuccess) return
+    if (state.status === 'expired') {
+      showPaywall('locked')
+    } else {
+      overlay.classList.remove('visible')
+    }
+  })
+
+  function renderBadgeAndPanel() {
+    badge.classList.remove('paid', 'ending')
+
+    if (state.status === 'active') {
+      badge.textContent = state.isDev ? '✓ Paid (dev)' : '✓ Paid member'
+      badge.classList.add('paid')
+    } else if (state.status === 'expired') {
+      badge.textContent = state.isDev ? 'Expired (dev)' : 'Trial ended'
+      badge.classList.add('ending')
+    } else {
+      const d = state.trialDaysRemaining
+      badge.textContent = (d === 1 ? 'Trial: 1 day left' : 'Trial: ' + d + ' days left') + (state.isDev ? ' (dev)' : '')
+      if (typeof d === 'number' && d <= 5) badge.classList.add('ending')
+    }
+    badge.classList.add('visible')
+
+    document.getElementById('ap-state').textContent =
+      state.status === 'active' ? (state.licensed ? 'Paid member · licensed' : 'Paid member')
+      : state.status === 'expired' ? 'Trial ended'
+      : 'Trial · ' + state.trialDaysRemaining + ' days left'
+
+    document.getElementById('ap-subscribe').style.display =
+      state.status === 'active' ? 'none' : 'block'
+    document.getElementById('ap-dev').style.display = state.isDev ? 'block' : 'none'
+  }
+
+  function showPaywall(view) {
+    overlay.classList.add('visible')
+    pwLocked.style.display = view === 'locked' ? 'block' : 'none'
+    pwSuccess.style.display = view === 'success' ? 'block' : 'none'
+  }
+
+  // --- Interactions ---
+  badge.addEventListener('click', () => panel.classList.toggle('visible'))
+
+  document.addEventListener('click', (e) => {
+    if (!panel.contains(e.target) && e.target !== badge) panel.classList.remove('visible')
+  })
+
+  function subscribe() {
+    if (state.paymentUrl) ipcRenderer.send('open-payment-link', state.paymentUrl)
+  }
+  document.getElementById('pw-subscribe').addEventListener('click', subscribe)
+  document.getElementById('ap-subscribe').addEventListener('click', subscribe)
+
+  async function activate(inputEl, msgEl, fromPaywall) {
+    const key = inputEl.value.trim()
+    if (!key) { msgEl.textContent = 'Enter a key first'; msgEl.classList.remove('ok'); return }
+    msgEl.textContent = 'Checking…'
+    msgEl.classList.remove('ok')
+    const res = await ipcRenderer.invoke('license:activate', key)
+    if (res.ok) {
+      inputEl.value = ''
+      if (fromPaywall) {
+        showingSuccess = true
+        showPaywall('success')
+      } else {
+        msgEl.textContent = 'Activated ✓'
+        msgEl.classList.add('ok')
+      }
+    } else {
+      msgEl.textContent = res.error || 'Activation failed'
+    }
+  }
+
+  document.getElementById('pw-activate').addEventListener('click', () =>
+    activate(document.getElementById('pw-key-input'), document.getElementById('pw-error'), true)
+  )
+  document.getElementById('ap-activate').addEventListener('click', () =>
+    activate(document.getElementById('ap-key-input'), document.getElementById('ap-msg'), false)
+  )
+
+  document.getElementById('pw-close').addEventListener('click', () => {
+    showingSuccess = false
+    overlay.classList.remove('visible')
+  })
+
+  document.querySelectorAll('[data-dev-status]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      showingSuccess = false
+      await ipcRenderer.invoke('dev:set-status', btn.dataset.devStatus)
+    })
+  })
+
+  // --- Feedback ---
+  const fbInput = document.getElementById('ap-feedback-input')
+  const fbMsg = document.getElementById('ap-feedback-msg')
+  const fbSend = document.getElementById('ap-feedback-send')
+  fbSend.addEventListener('click', async () => {
+    const text = fbInput.value.trim()
+    if (!text) { fbMsg.textContent = 'Type something first'; fbMsg.classList.remove('ok'); return }
+    fbMsg.textContent = 'Sending…'; fbMsg.classList.remove('ok')
+    fbSend.disabled = true
+    const res = await ipcRenderer.invoke('feedback:send', text)
+    fbSend.disabled = false
+    if (res.ok) {
+      fbInput.value = ''
+      fbMsg.textContent = 'Thank you — sent ✓'
+      fbMsg.classList.add('ok')
+    } else {
+      fbMsg.textContent = res.error || 'Could not send'
+    }
+  })
+</script>
+</body>
+</html>
