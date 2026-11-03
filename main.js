@@ -5,7 +5,7 @@ const { autoUpdater } = require('electron-updater')
 nativeTheme.themeSource = 'dark'
 
 let mainWindow
-const SNAP_THRESHOLD = 28 // px from left edge to trigger snap
+const SNAP_THRESHOLD = 70 // px from either screen edge to trigger snap
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -30,25 +30,28 @@ function createWindow() {
 
   let snapCandidate = false
 
+  // Snap to whichever screen edge the window is near: left or right.
+  let snapSide = null
+
   mainWindow.on('move', () => {
-    const [x, y] = mainWindow.getPosition()
-    const display = screen.getDisplayNearestPoint({ x, y })
-    const { workArea } = display
-    const nearLeft = x <= workArea.x + SNAP_THRESHOLD
-    if (nearLeft !== snapCandidate) {
-      snapCandidate = nearLeft
-      send('snap-hint', snapCandidate ? 'left' : null)
+    const b = mainWindow.getBounds()
+    const { workArea } = screen.getDisplayMatching(b)
+    let side = null
+    if (b.x <= workArea.x + SNAP_THRESHOLD) side = 'left'
+    else if (b.x + b.width >= workArea.x + workArea.width - SNAP_THRESHOLD) side = 'right'
+    if (side !== snapSide) {
+      snapSide = side
+      send('snap-hint', side)
     }
   })
 
   mainWindow.on('moved', () => {
-    if (!snapCandidate) return
-    const [, y] = mainWindow.getPosition()
-    const display = screen.getDisplayNearestPoint({ x: 0, y })
-    const { workArea } = display
+    if (!snapSide) return
     const b = mainWindow.getBounds()
-    mainWindow.setBounds({ x: workArea.x, y: b.y, width: b.width, height: b.height }, true)
-    snapCandidate = false
+    const { workArea } = screen.getDisplayMatching(b)
+    const x = snapSide === 'left' ? workArea.x : workArea.x + workArea.width - b.width
+    mainWindow.setBounds({ x, y: b.y, width: b.width, height: b.height }, true)
+    snapSide = null
     send('snap-hint', null)
   })
 

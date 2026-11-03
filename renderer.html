@@ -38,6 +38,7 @@
 
   #snap-indicator { position: fixed; top: 0; left: 0; width: 3px; height: 100%; background: rgba(255,255,255,0.9); box-shadow: 0 0 12px rgba(255,255,255,0.8); opacity: 0; z-index: 99993; transition: opacity 0.15s ease; }
   #snap-indicator.visible { opacity: 1; }
+  #snap-indicator.right { left: auto; right: 0; }
 
   body::after {
     content: ''; position: fixed; inset: 0; border-radius: 12px;
@@ -429,7 +430,9 @@
 
   // --- Snap indicator ---
   ipcRenderer.on('snap-hint', (e, side) => {
-    document.getElementById('snap-indicator').classList.toggle('visible', side === 'left')
+    const ind = document.getElementById('snap-indicator')
+    ind.classList.toggle('right', side === 'right')
+    ind.classList.toggle('visible', side === 'left' || side === 'right')
   })
 
   // --- Cursor enters/leaves the window ---
