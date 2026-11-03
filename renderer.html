@@ -16,7 +16,7 @@
     backdrop-filter: blur(18px);
     transition: background 0.3s ease;
   }
-  body.cursor-inside { background: #222222; }
+  body.cursor-inside { background: rgba(34, 34, 34, 0.65); }
 
   webview {
     position: absolute;
@@ -79,6 +79,25 @@
     color: rgba(255,255,255,0.5);
   }
   .platform-btn.active { color: #fff; border-color: rgba(255,255,255,0.75); }
+
+  /* --- First-launch platform picker --- */
+  #platform-picker {
+    display: none; position: fixed; inset: 0; z-index: 99999;
+    background: rgba(10,10,14,0.9); align-items: center; justify-content: center;
+    -webkit-app-region: no-drag;
+  }
+  .picker-card {
+    width: 260px; padding: 26px 20px; border-radius: 18px; text-align: center;
+    background: rgba(255,255,255,0.08); border: 0.5px solid rgba(255,255,255,0.18);
+    color: #fff; font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+  }
+  .picker-title { font-size: 15px; font-weight: 600; margin-bottom: 16px; }
+  .picker-choice {
+    display: block; width: 100%; padding: 10px 0; margin-bottom: 8px; border-radius: 999px;
+    border: 0.5px solid rgba(255,255,255,0.2); background: rgba(255,255,255,0.1);
+    color: #fff; font: 500 13px -apple-system, sans-serif; cursor: pointer;
+  }
+  .picker-choice:hover { background: rgba(255,255,255,0.2); }
 
   /* --- Account panel --- */
   #account-panel {
@@ -229,6 +248,16 @@
     allowpopups>
   </webview>
 
+  <!-- First-launch platform picker -->
+  <div id="platform-picker">
+    <div class="picker-card">
+      <div class="picker-title">Which do you use?</div>
+      <button class="picker-choice" data-platform="threads">Threads</button>
+      <button class="picker-choice" data-platform="instagram">Instagram</button>
+      <button class="picker-choice" data-platform="facebook">Facebook</button>
+    </div>
+  </div>
+
   <!-- Paywall -->
   <div id="paywall-overlay">
     <div class="paywall-card" id="pw-locked">
@@ -265,8 +294,8 @@
 
   // --- Instagram / Facebook styling (transparent body; overlays get solid backgrounds) ---
   const SIMPLE_PAGE_CSS = `
-    html, body, div, span, section, main, article { background-color: transparent !important; }
-    header, nav, footer { background-color: rgba(0, 0, 0, 0.22) !important; }
+    html, body, body * { background-color: transparent !important; }
+    body header, body nav, body footer { background-color: rgba(0, 0, 0, 0.22) !important; }
     ::-webkit-scrollbar { display: none !important; }
   `
   // Gives visible overlays (menus, dialogs, hover cards) a solid background.
@@ -293,6 +322,33 @@
     })();
   `
 
+  // Instagram/Facebook are single-page apps that keep adding elements with their own
+  // backgrounds, so CSS alone isn't enough. This sets transparency inline on every
+  // element and re-applies it (throttled) whenever the page changes.
+  const SIMPLE_PAGE_JS = `
+    (function() {
+      if (window.__lucidSimpleFix) return;
+      window.__lucidSimpleFix = true;
+      function apply() {
+        document.documentElement.style.setProperty('background-color', 'transparent', 'important');
+        if (document.body) document.body.style.setProperty('background-color', 'transparent', 'important');
+        document.querySelectorAll('body *').forEach(function(el) {
+          var tag = el.tagName;
+          var color = (tag === 'HEADER' || tag === 'NAV' || tag === 'FOOTER') ? 'rgba(0, 0, 0, 0.22)' : 'transparent';
+          el.style.setProperty('background-color', color, 'important');
+        });
+      }
+      var queued = false;
+      function schedule() {
+        if (queued) return;
+        queued = true;
+        requestAnimationFrame(function() { queued = false; apply(); });
+      }
+      apply();
+      new MutationObserver(schedule).observe(document.documentElement, { childList: true, subtree: true });
+    })();
+  `
+
   const PLATFORMS = {
     threads: 'https://www.threads.net',
     instagram: 'https://www.instagram.com/',
@@ -310,7 +366,19 @@
   document.querySelectorAll('.platform-btn').forEach(b => {
     b.addEventListener('click', () => setPlatform(b.dataset.platform, true))
   })
-  setPlatform(lastPlatform, lastPlatform !== 'threads')
+  let hasChoice = false
+  try { hasChoice = !!localStorage.getItem('lucid-platform') } catch (e) {}
+  if (hasChoice) {
+    setPlatform(lastPlatform, lastPlatform !== 'threads')
+  } else {
+    document.getElementById('platform-picker').style.display = 'flex'
+    document.querySelectorAll('.picker-choice').forEach(b => {
+      b.addEventListener('click', () => {
+        document.getElementById('platform-picker').style.display = 'none'
+        setPlatform(b.dataset.platform, b.dataset.platform !== 'threads')
+      })
+    })
+  }
 
   // --- Loading bar ---
   wv.addEventListener('did-start-loading', () => {
@@ -334,7 +402,10 @@
           return !!document.querySelector('input[type="password"]')
         })()
       `).then(isLogin => {
-        if (!isLogin) wv.insertCSS(SIMPLE_PAGE_CSS)
+        if (!isLogin) {
+          wv.insertCSS(SIMPLE_PAGE_CSS)
+          wv.executeJavaScript(SIMPLE_PAGE_JS).catch(() => {})
+        }
       }).catch(() => {})
       wv.executeJavaScript(OVERLAY_FIX_JS).catch(() => {})
       return
