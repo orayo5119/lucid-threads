@@ -1,4 +1,4 @@
-const { app, BrowserWindow, nativeTheme, screen, ipcMain, shell } = require('electron')
+const { app, BrowserWindow, nativeTheme, screen, ipcMain, shell, webContents, session } = require('electron')
 const { checkLicense, activateKey, devSetStatus, sendFeedback } = require('./license')
 const { autoUpdater } = require('electron-updater')
 
@@ -122,14 +122,56 @@ function setupAutoUpdater() {
   setInterval(check, 4 * 60 * 60 * 1000)
 }
 
+// --- TikTok: real touch swipe for each wheel gesture ---
+// TikTok's mobile feed only responds to touch, so the page reports wheel gestures and
+// we send a synthetic touch scroll through Chrome's input protocol.
+ipcMain.on('tiktok-swipe', async (event, { id, dir, w, h }) => {
+  const wc = webContents.fromId(id)
+  if (!wc || wc.isDestroyed()) return
+  try {
+    if (!wc.debugger.isAttached()) {
+      wc.debugger.attach('1.3')
+      await wc.debugger.sendCommand('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 })
+    }
+    const width = w || 380, height = h || 800
+    await wc.debugger.sendCommand('Input.synthesizeScrollGesture', {
+      x: Math.round(width / 2),
+      y: Math.round(height / 2),
+      yDistance: dir > 0 ? -Math.round(height * 0.6) : Math.round(height * 0.6),
+      gestureSourceType: 'touch',
+      speed: 2500,
+    })
+  } catch (err) {
+    console.error('TikTok swipe failed:', err.message)
+  }
+})
+
 ipcMain.on('update:install', () => autoUpdater.quitAndInstall())
 
 ipcMain.on('open-payment-link', (event, paymentUrl) => {
   shell.openExternal(paymentUrl)
 })
 
+// --- Keep sites from opening the App Store or their phone apps ---
+// TikTok's mobile site links to the App Store and to the TikTok app; macOS would open those.
+function isAppLink(url) {
+  return /^(itms-apps?s?|itms|market|intent|snssdk\d*|tiktok|musically):/i.test(url) ||
+    /^https?:\/\/(apps|itunes)\.apple\.com\//i.test(url)
+}
+
+app.on('web-contents-created', (event, wc) => {
+  const block = (e, url) => { if (isAppLink(url)) e.preventDefault() }
+  wc.on('will-navigate', block)
+  wc.on('will-redirect', block)
+  wc.setWindowOpenHandler(({ url }) => isAppLink(url) ? { action: 'deny' } : { action: 'allow' })
+})
+
 app.whenReady().then(() => {
   createWindow()
+  // External app links (itms-apps:, tiktok:, ...) ask for "openExternal" permission: refuse it.
+  session.fromPartition('persist:threads').setPermissionRequestHandler((wc, permission, callback) => {
+    callback(permission !== 'openExternal')
+  })
   setupAutoUpdater()
 
   // Poll cursor every 80ms — the webview swallows pointer events, so

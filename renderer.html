@@ -73,12 +73,12 @@
   #platform-switch { display: flex; gap: 6px; transition: opacity 0.3s ease; }
   #platform-switch.hidden-by-blur { opacity: 0; pointer-events: none; }
   .platform-btn {
-    width: 26px; height: 26px; padding: 0; border-radius: 999px; cursor: pointer;
+    width: 26px; height: 26px; padding: 0; cursor: pointer;
     display: flex; align-items: center; justify-content: center;
-    background: rgba(0,0,0,0.55); border: 0.5px solid rgba(255,255,255,0.25);
-    color: rgba(255,255,255,0.5);
+    background: none; border: none;
+    color: rgba(255,255,255,0.45);
   }
-  .platform-btn.active { color: #fff; border-color: rgba(255,255,255,0.75); }
+  .platform-btn.active { color: #fff; }
 
   /* --- First-launch platform picker --- */
   #platform-picker {
@@ -255,7 +255,7 @@
       <button class="picker-choice" data-platform="threads">Threads</button>
       <button class="picker-choice" data-platform="instagram">Instagram</button>
       <button class="picker-choice" data-platform="facebook">Facebook</button>
-    </div>
+          </div>
   </div>
 
   <!-- Paywall -->
@@ -329,26 +329,62 @@
     (function() {
       if (window.__lucidSimpleFix) return;
       window.__lucidSimpleFix = true;
-      function apply() {
-        document.documentElement.style.setProperty('background-color', 'transparent', 'important');
-        if (document.body) document.body.style.setProperty('background-color', 'transparent', 'important');
-        document.querySelectorAll('body *').forEach(function(el) {
-          var tag = el.tagName;
-          var color = (tag === 'HEADER' || tag === 'NAV' || tag === 'FOOTER') ? 'rgba(0, 0, 0, 0.22)' : 'transparent';
-          el.style.setProperty('background-color', color, 'important');
+      // Transparency comes from a stylesheet, which applies to new elements instantly
+      // (no blinking) and costs almost nothing while scrolling.
+      var STYLE_ID = '__lucid_transparent';
+      var KEEP = ':not([data-lucid-keep]):not([data-lucid-keep] *):not([role="dialog"]):not([role="dialog"] *)';
+      var CSS = 'html, body, body *' + KEEP + ' { background-color: transparent !important; } ' +
+                'body header, body nav, body footer { background-color: rgba(0, 0, 0, 0.22) !important; }';
+      function setTransparent(on) {
+        var el = document.getElementById(STYLE_ID);
+        if (on && !el) {
+          el = document.createElement('style');
+          el.id = STYLE_ID;
+          el.textContent = CSS;
+          (document.head || document.documentElement).appendChild(el);
+        } else if (!on && el) {
+          el.remove();
+        }
+      }
+      // Pop-ups and dialogs keep their own backgrounds, so dark text on a white card stays readable.
+      // Sites add them near the top of the page, so only the first two levels are checked (cheap).
+      function markOverlays() {
+        if (!document.body) return;
+        var candidates = [];
+        Array.prototype.forEach.call(document.body.children, function(c) {
+          candidates.push(c);
+          Array.prototype.forEach.call(c.children, function(g) { candidates.push(g); });
+        });
+        candidates.forEach(function(el) {
+          // A fixed layer with a video is the feed, not a pop-up — keep it see-through.
+          if (getComputedStyle(el).position === 'fixed' && !el.querySelector('video')) el.setAttribute('data-lucid-keep', '');
+          else el.removeAttribute('data-lucid-keep');
         });
       }
-      var queued = false;
+      function apply() {
+        markOverlays();
+        setTransparent(true);
+      }
+      // The sign-in check reads the page text, so run it at most every 500ms
+      // and only after scrolling has settled.
+      var timer = null;
+      var lastWheel = 0;
+      window.addEventListener('wheel', function() { lastWheel = Date.now(); }, { passive: true, capture: true });
       function schedule() {
-        if (queued) return;
-        queued = true;
-        requestAnimationFrame(function() { queued = false; apply(); });
+        if (timer) return;
+        timer = setTimeout(function run() {
+          if (Date.now() - lastWheel < 400) { timer = setTimeout(run, 400); return; }
+          timer = null;
+          apply();
+        }, 500);
       }
       apply();
-      new MutationObserver(schedule).observe(document.documentElement, { childList: true, subtree: true });
+      new MutationObserver(function() { markOverlays(); schedule(); })
+        .observe(document.documentElement, { childList: true, subtree: true });
     })();
   `
 
+  const DESKTOP_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'
   const PLATFORMS = {
     threads: 'https://www.threads.net',
     instagram: 'https://www.instagram.com/',
@@ -361,7 +397,12 @@
     const platform = PLATFORMS[name] ? name : 'threads'
     document.querySelectorAll('.platform-btn').forEach(b => b.classList.toggle('active', b.dataset.platform === platform))
     try { localStorage.setItem('lucid-platform', platform) } catch (e) {}
-    if (navigate) wv.src = PLATFORMS[platform]
+    if (navigate) {
+      const ua = DESKTOP_UA
+      wv.setAttribute('useragent', ua)
+      try { wv.setUserAgent(ua) } catch (e) {}
+      wv.src = PLATFORMS[platform]
+    }
   }
   document.querySelectorAll('.platform-btn').forEach(b => {
     b.addEventListener('click', () => setPlatform(b.dataset.platform, true))

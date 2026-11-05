@@ -1,6 +1,6 @@
 {
   "name": "lucid-browser",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "description": "Lucid Threads — a quiet, translucent window for Threads",
   "main": "main.js",
   "scripts": {
